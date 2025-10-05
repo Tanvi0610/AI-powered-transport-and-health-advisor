@@ -335,7 +335,6 @@ export default function RouteFinder() {
                     ✓
                   </div>
                 )}
-
                 <div
                   style={{
                     display: "flex",
@@ -390,7 +389,6 @@ export default function RouteFinder() {
                     AQI: {route.aqi || "N/A"}
                   </div>
                 </div>
-
                 <div
                   style={{
                     display: "grid",
@@ -525,7 +523,6 @@ export default function RouteFinder() {
                     </p>
                   </div>
                 </div>
-
                 {selectedRoute === index && (
                   <button
                     style={{
@@ -542,6 +539,13 @@ export default function RouteFinder() {
                     }}
                     onMouseOver={(e) => (e.target.style.background = "#059669")}
                     onMouseOut={(e) => (e.target.style.background = "#10b981")}
+                    onClick={() => {
+                      if (routes[index].googleMapsUrl) {
+                        window.open(route.googleMapsUrl, "_blank");
+                      } else {
+                        alert("Navigation unavailable for this route");
+                      }
+                    }}
                   >
                     🚗 Start Navigation
                   </button>
