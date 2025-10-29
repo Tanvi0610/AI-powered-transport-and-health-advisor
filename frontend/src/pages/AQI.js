@@ -2,63 +2,66 @@ import React, { useState } from "react";
 import { Line } from "react-chartjs-2";
 import {
   Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
   LineElement,
   PointElement,
+  CategoryScale,
+  LinearScale,
   Title,
-  Tooltip,
   Legend,
+  Tooltip,
+  Filler,
 } from "chart.js";
+import "chartjs-adapter-date-fns";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 
-ChartJS.register(CategoryScale, LinearScale, LineElement, PointElement, Title, Tooltip, Legend);
+// ChartJS registration
+ChartJS.register(LineElement, PointElement, CategoryScale, LinearScale, Title, Legend, Tooltip, Filler);
 
-const AQIMarkerIcon = (aqi) => {
-  let color = "green";
-  if (aqi > 100) color = "orange";
-  if (aqi > 200) color = "red";
-
-  return new L.Icon({
-    iconUrl: `https://chart.googleapis.com/chart?chst=d_map_pin_letter&chld=${aqi}|${color}|000000`,
-    iconSize: [35, 55],
-  });
-};
+// Custom Map Marker Icon
+const markerIcon = new L.Icon({
+  iconUrl: "https://cdn-icons-png.flaticon.com/512/684/684908.png",
+  iconSize: [40, 40],
+  iconAnchor: [20, 40],
+  popupAnchor: [0, -35],
+});
 
 function AQIChart() {
   const [city, setCity] = useState("");
-  const [chartData, setChartData] = useState(null);
+  const [data, setData] = useState(null);
   const [peak, setPeak] = useState(null);
-  const [coords, setCoords] = useState(null);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [coords, setCoords] = useState(null);
+  const [forecast, setForecast] = useState(null);
 
   const fetchHistoricalData = async () => {
     if (!city.trim()) {
-      setError("Please enter a city.");
+      setError("Please enter a city name.");
       return;
     }
     setLoading(true);
     setError("");
+    setData(null);
+    setPeak(null);
+    setCoords(null);
+    setForecast(null);
+
     try {
-      const response = await fetch("http://127.0.0.1:5000/historical", {
+      const histRes = await fetch("http://127.0.0.1:5000/historical", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ city }),
       });
-      const data = await response.json();
+      const histData = await histRes.json();
 
-      if (!data || !data.timestamps?.length) {
-        setError("No data found for this city.");
-        setLoading(false);
-        return;
-      }
+      if (histData.error) throw new Error(histData.error);
 
+<<<<<<< HEAD
       // Fetch city coordinates using OpenWeather API
       const geoRes = await fetch(
-        `https://api.openweathermap.org/geo/1.0/direct?q=${city}&limit=1&appid=fc77b14684513ef027f4902b8f9d24a1`
+        `https://api.openweathermap.org/geo/1.0/direct?q=${city}&limit=1&appid=Your_api_key`
       );
       const geoData = await geoRes.json();
       if (geoData.length > 0) {
@@ -67,113 +70,169 @@ function AQIChart() {
 
       setChartData({
         labels: data.timestamps.map((t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+=======
+      setData({
+        labels: histData.timestamps,
+>>>>>>> 96e15b1 (finallll)
         datasets: [
           {
             label: "Temperature (°C)",
-            data: data.temperature,
-            borderColor: "#FF5733",
-            tension: 0.3,
-            fill: false,
+            data: histData.temperature,
+            borderColor: "#ff6384",
+            backgroundColor: "rgba(255, 99, 132, 0.1)",
+            tension: 0.4,
+            fill: true,
           },
           {
             label: "Humidity (%)",
-            data: data.humidity,
-            borderColor: "#007BFF",
-            tension: 0.3,
-            fill: false,
+            data: histData.humidity,
+            borderColor: "#36a2eb",
+            backgroundColor: "rgba(54, 162, 235, 0.1)",
+            tension: 0.4,
+            fill: true,
           },
           {
             label: "Wind Speed (m/s)",
-            data: data.wind_speed,
-            borderColor: "#28A745",
-            tension: 0.3,
-            fill: false,
+            data: histData.wind_speed,
+            borderColor: "#4bc0c0",
+            backgroundColor: "rgba(75, 192, 192, 0.1)",
+            tension: 0.4,
+            fill: true,
           },
           {
             label: "AQI",
-            data: data.aqi,
-            borderColor: "#FFC107",
-            borderDash: [5, 5],
-            tension: 0.3,
+            data: histData.aqi,
+            borderColor: "#ff9f40",
+            backgroundColor: "rgba(255, 159, 64, 0.2)",
+            borderDash: [6, 4],
             yAxisID: "y1",
+            tension: 0.4,
+            fill: true,
           },
         ],
       });
 
       setPeak({
-        time: data.peak_time,
-        aqi: data.peak_aqi,
+        aqi: histData.peak_aqi,
+        time: histData.peak_time,
       });
+
+      if (histData.coordinates) setCoords(histData.coordinates);
+
+      const forecastRes = await fetch("http://127.0.0.1:5000/forecast", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ city }),
+      });
+
+      if (forecastRes.ok) {
+        const forecastData = await forecastRes.json();
+        setForecast(forecastData.forecast);
+      }
     } catch (err) {
-      setError("Failed to fetch data");
+      console.error(err);
+      setError("Failed to fetch data. Try again later.");
     }
     setLoading(false);
   };
 
   return (
-    <div style={{ padding: "20px" }}>
-      <h2 className="text-2xl font-bold mb-3">🌫️ Air Quality Index (AQI) Predictor</h2>
+    <div
+      style={{
+        padding: "20px",
+        maxWidth: "95vw",
+        margin: "auto",
+        boxSizing: "border-box",
+      }}
+    >
+      <h2 style={{ marginBottom: "15px", textAlign: "center" }}>
+        🌆 Air Quality & Weather Tracker
+      </h2>
 
-      <div style={{ marginBottom: "10px" }}>
+      {/* Input Section */}
+      <div
+        style={{
+          marginBottom: "15px",
+          display: "flex",
+          justifyContent: "center",
+          flexWrap: "wrap",
+          gap: "10px",
+        }}
+      >
         <input
           type="text"
-          placeholder="Enter city"
+          placeholder="Enter city name"
           value={city}
           onChange={(e) => setCity(e.target.value)}
-          style={{ padding: "6px 8px", marginRight: "10px", borderRadius: "5px", border: "1px solid gray" }}
+          style={{
+            padding: "10px",
+            borderRadius: "6px",
+            border: "1px solid #ccc",
+            minWidth: "220px",
+          }}
         />
         <button
           onClick={fetchHistoricalData}
           disabled={loading}
           style={{
-            padding: "6px 12px",
-            background: "#007bff",
+            padding: "10px 15px",
+            borderRadius: "6px",
+            backgroundColor: "#007bff",
             color: "white",
             border: "none",
-            borderRadius: "5px",
+            cursor: "pointer",
           }}
         >
-          {loading ? "Loading..." : "Get AQI"}
+          {loading ? "Loading..." : "Get Data"}
         </button>
       </div>
 
-      {error && <p style={{ color: "red" }}>{error}</p>}
+      {error && <p style={{ color: "red", textAlign: "center" }}>{error}</p>}
 
-      {coords && (
-        <div style={{ height: "400px", borderRadius: "10px", overflow: "hidden", marginBottom: "20px" }}>
-          <MapContainer center={coords} zoom={10} style={{ height: "100%", width: "100%" }}>
-            <TileLayer
-              attribution="© OpenStreetMap contributors"
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
-            {peak && (
-              <Marker position={coords} icon={AQIMarkerIcon(Math.round(peak.aqi || 0))}>
-                <Popup>
-                  <b>{city.toUpperCase()}</b><br />
-                  Peak AQI: {peak.aqi ? peak.aqi.toFixed(2) : "N/A"}<br />
-                  Time: {peak.time || "N/A"}
-                </Popup>
-              </Marker>
-            )}
-          </MapContainer>
-        </div>
+      {/* Peak AQI Info */}
+      {peak && (
+        <p style={{ textAlign: "center", marginBottom: "15px" }}>
+          🌍 <strong>{city.toUpperCase()}</strong> — Peak AQI:{" "}
+          <strong>{peak.aqi ? peak.aqi.toFixed(2) : "N/A"}</strong> at{" "}
+          <strong>{peak.time || "N/A"}</strong>
+        </p>
       )}
 
-      {chartData && (
-        <div style={{ background: "#fafafa", padding: "20px", borderRadius: "10px", boxShadow: "0 0 8px rgba(0,0,0,0.1)" }}>
+      {/* Chart Section */}
+      {data && (
+        <div
+          style={{
+            height: "350px",
+            width: "100%",
+            background: "#fafafa",
+            borderRadius: "10px",
+            padding: "10px",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+          }}
+        >
           <Line
-            data={chartData}
+            key={city}
+            data={data}
             options={{
               responsive: true,
+              maintainAspectRatio: false,
               plugins: {
                 legend: { position: "top" },
-                title: { display: true, text: `AQI and Weather Trends for ${city}` },
+                title: {
+                  display: true,
+                  text: `24-Hour Weather & AQI Trend for ${city}`,
+                  font: { size: 16 },
+                },
               },
               scales: {
+                x: {
+                  ticks: { maxTicksLimit: 8 },
+                  title: { display: true, text: "Time (Hours)" },
+                },
                 y: {
                   type: "linear",
                   position: "left",
-                  title: { display: true, text: "Temp/Humidity/Wind" },
+                  title: { display: true, text: "Temp / Humidity / Wind" },
                 },
                 y1: {
                   type: "linear",
@@ -184,6 +243,54 @@ function AQIChart() {
               },
             }}
           />
+        </div>
+      )}
+
+      {/* Map Section */}
+      {coords && (
+        <div
+          style={{
+            height: "400px",
+            width: "100%",
+            marginTop: "30px",
+            borderRadius: "10px",
+            overflow: "hidden",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+          }}
+        >
+          <MapContainer
+            key={`${coords.lat}-${coords.lon}`}
+            center={[coords.lat, coords.lon]}
+            zoom={12}
+            style={{ height: "100%", width: "100%" }}
+          >
+            <TileLayer
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            />
+            <Marker position={[coords.lat, coords.lon]} icon={markerIcon}>
+              <Popup>
+                <strong>📍 {city.toUpperCase()}</strong>
+                <br />
+                🌫️ Peak AQI: {peak?.aqi?.toFixed(2)}
+                <br />
+                🕓 Time: {peak?.time}
+                {forecast && (
+                  <>
+                    <hr />
+                    <b>Next 2-Hour AQI Forecast:</b>
+                    <ul style={{ paddingLeft: "15px", margin: "5px 0" }}>
+                      {forecast.map((f, i) => (
+                        <li key={i}>
+                          {f.time} → {f.predicted_aqi}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </Popup>
+            </Marker>
+          </MapContainer>
         </div>
       )}
     </div>

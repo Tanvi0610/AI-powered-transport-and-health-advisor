@@ -2,122 +2,96 @@ const express = require("express");
 const app = express();
 const cors = require("cors");
 const fetch = require("node-fetch");
+require("dotenv").config();
+require("./Models/db");
 
 const AuthRouter = require("./Routes/AuthRouter");
 const productRouter = require("./Routes/productRouter");
 
-require("dotenv").config();
-require("./Models/db");
-
 const ORS_API_KEY = process.env.ORS_API_KEY;
 const OPENWEATHER_API_KEY = process.env.OPENWEATHER_API_KEY;
 
+// ------------------------------
 // Middleware
+// ------------------------------
 app.use(express.json());
 app.use(
   cors({
     origin: "http://localhost:3000",
     methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 
+// ------------------------------
 // Routes
+// ------------------------------
 app.use("/auth", AuthRouter);
 app.use("/products", productRouter);
 
-app.get("/ping", (req, res) => {
-  res.send("PING");
-});
+app.get("/ping", (req, res) => res.send("PING"));
 
-// Geocode city name to coordinates using ORS
+// ------------------------------
+// Helper Functions
+// ------------------------------
+
+// 1️⃣ Geocode a city name to coordinates (ORS Geocoding)
 const geocodeCity = async (cityName) => {
-  try {
-    const url = `https://api.openrouteservice.org/geocode/search?api_key=${ORS_API_KEY}&text=${encodeURIComponent(
-      cityName
-    )}&size=1`;
+  const url = `https://api.openrouteservice.org/geocode/search?api_key=${ORS_API_KEY}&text=${encodeURIComponent(cityName)}&size=1`;
+  const res = await fetch(url);
+  const data = await res.json();
 
-    const response = await fetch(url);
-    const data = await response.json();
-
-    if (data.features && data.features.length > 0) {
-      const [lon, lat] = data.features[0].geometry.coordinates;
-      return { lon, lat };
-    }
-    throw new Error(`Could not geocode: ${cityName}`);
-  } catch (err) {
-    console.error(`Geocoding error for ${cityName}:`, err.message);
-    throw err;
+  if (data.features && data.features.length > 0) {
+    const [lon, lat] = data.features[0].geometry.coordinates;
+    return { lat, lon };
   }
+  throw new Error(`Could not geocode: ${cityName}`);
 };
 
-// Calculate distance between two coordinates (Haversine formula)
+// 2️⃣ Calculate distance (Haversine)
 const calculateDistance = (lat1, lon1, lat2, lon2) => {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLon = ((lon2 - lon1) * Math.PI) / 180;
   const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.sin(dLat / 2) ** 2 +
     Math.cos((lat1 * Math.PI) / 180) *
       Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
+      Math.sin(dLon / 2) ** 2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 };
 
-// Get AQI from OpenWeather
+// 3️⃣ Fetch AQI from OpenWeather
 const getAQI = async (lat, lon) => {
   try {
-    console.log(`Fetching AQI for lat=${lat}, lon=${lon}`);
     const url = `https://api.openweathermap.org/data/2.5/air_pollution?lat=${lat}&lon=${lon}&appid=${OPENWEATHER_API_KEY}`;
     const res = await fetch(url);
     const data = await res.json();
-    console.log(`AQI Response for lat=${lat}, lon=${lon}:`, data);
-    if (data.cod && data.cod !== 200) {
-      console.error(`AQI API Error: ${data.message}`);
-      return null;
-    }
+
     if (data.list && data.list.length > 0) {
       return data.list[0].main.aqi;
     }
-    console.warn(`No AQI data for lat=${lat}, lon=${lon}`);
     return null;
   } catch (err) {
-    console.error(
-      `Error fetching AQI for lat=${lat}, lon=${lon}:`,
-      err.message
-    );
+    console.error("AQI fetch error:", err.message);
     return null;
   }
 };
 
-// Route finding endpoint
+// ------------------------------
+// 🗺️ Route Finding Endpoint
+// ------------------------------
 app.post("/api/routes", async (req, res) => {
   const { start, end } = req.body;
-
   if (!start || !end) {
     return res.status(400).json({ message: "Start and End required" });
   }
 
-  if (!ORS_API_KEY) {
-    return res.status(500).json({ message: "ORS API key not configured" });
-  }
-
-  if (!OPENWEATHER_API_KEY) {
-    return res
-      .status(500)
-      .json({ message: "OpenWeather API key not configured" });
-  }
-
   try {
-    console.log("Geocoding locations...");
+    console.log(`🧭 Geocoding: ${start} → ${end}`);
     const startCoords = await geocodeCity(start);
     const endCoords = await geocodeCity(end);
-
-    console.log("Start coords:", startCoords);
-    console.log("End coords:", endCoords);
 
     const distance = calculateDistance(
       startCoords.lat,
@@ -125,39 +99,31 @@ app.post("/api/routes", async (req, res) => {
       endCoords.lat,
       endCoords.lon
     );
-    console.log(`Route distance: ${distance.toFixed(2)} km`);
+
+    console.log(`📏 Distance: ${distance.toFixed(2)} km`);
+
+    // ORS allows alt routes only under ~100 km
+    const allowAlternatives = distance <= 100;
 
     const directionsURL = `https://api.openrouteservice.org/v2/directions/driving-car/geojson?api_key=${ORS_API_KEY}`;
 
-    let coordinates = [
-      [startCoords.lon, startCoords.lat],
-      [endCoords.lon, endCoords.lat],
-    ];
-
-    if (distance > 140) {
-      const midLat = (startCoords.lat + endCoords.lat) / 2;
-      const midLon = (startCoords.lon + endCoords.lon) / 2;
-      coordinates = [
-        [startCoords.lon, startCoords.lat],
-        [midLon, midLat],
-        [endCoords.lon, endCoords.lat],
-      ];
-      console.log("Added waypoint for long route");
-    }
-
     const requestBody = {
-      coordinates: coordinates,
-      alternative_routes:
-        distance > 140
-          ? undefined
-          : {
-              share_factor: 0.6,
-              target_count: 3,
-              weight_factor: 1.4,
-            },
+      coordinates: [
+        [startCoords.lon, startCoords.lat],
+        [endCoords.lon, endCoords.lat],
+      ],
     };
 
-    console.log("Fetching routes from OpenRouteService...");
+    if (allowAlternatives) {
+      requestBody.alternative_routes = {
+        share_factor: 0.6,
+        target_count: 3,
+        weight_factor: 1.4,
+      };
+    } else {
+      console.log("⚠️ Long route detected – skipping alternative routes");
+    }
+
     const directionsRes = await fetch(directionsURL, {
       method: "POST",
       headers: {
@@ -167,119 +133,66 @@ app.post("/api/routes", async (req, res) => {
       body: JSON.stringify(requestBody),
     });
 
-    const directionsData = await directionsRes.json();
-    console.log("ORS Response:", JSON.stringify(directionsData, null, 2));
-
-    if (directionsData.error) {
-      console.error("ORS Error:", directionsData.error);
-      return res.status(500).json({
-        message: "Error fetching directions",
-        error: directionsData.error.message || "Unknown error",
-      });
-    }
-
-    if (!directionsData.features || directionsData.features.length === 0) {
+    const data = await directionsRes.json();
+    if (!data.features || data.features.length === 0) {
       return res.status(404).json({ message: "No routes found" });
     }
 
-    console.log(`Found ${directionsData.features.length} routes`);
+    console.log(`✅ Found ${data.features.length} route(s)`);
 
     const routesWithAQI = await Promise.all(
-      directionsData.features.map(async (feature) => {
-        const coordinates = feature.geometry?.coordinates || [
-          [startCoords.lon, startCoords.lat],
-          [endCoords.lon, endCoords.lat],
-        ];
-        console.log(`Route coordinates:`, coordinates);
+      data.features.map(async (feature) => {
+        const coords = feature.geometry?.coordinates || [];
+        const samplePoints = [coords[0], coords[coords.length - 1]];
 
-        let aqi = 3; // Default AQI
-        const samplePoints = [
-          coordinates[0],
-          coordinates[coordinates.length - 1],
-        ];
         const aqiValues = await Promise.all(
           samplePoints.map(([lon, lat]) => getAQI(lat, lon))
         );
-        console.log(`AQI values:`, aqiValues);
-        const validAQIs = aqiValues.filter(
-          (v) => v !== null && v !== undefined
-        );
-        if (validAQIs.length > 0) {
-          aqi = Math.round(
-            validAQIs.reduce((sum, v) => sum + v, 0) / validAQIs.length
-          );
-        }
 
-        let googleMapsUrl = encodeURI(
-          `https://www.google.com/maps/dir/?api=1&origin=${startCoords.lat},${startCoords.lon}&destination=${endCoords.lat},${endCoords.lon}&travelmode=driving`
-        );
+        const validAQIs = aqiValues.filter((v) => v !== null);
+        const avgAQI =
+          validAQIs.length > 0
+            ? Math.round(validAQIs.reduce((a, b) => a + b, 0) / validAQIs.length)
+            : 3;
 
         return {
           eta: Math.round(feature.properties.summary.duration / 60),
           distance: Math.round(feature.properties.summary.distance / 1000),
-          aqi,
-          coordinates,
+          aqi: avgAQI,
+          coordinates: coords,
+          name: "Alternative Route",
           summary: `${Math.round(
             feature.properties.summary.distance / 1000
           )} km, ${Math.round(feature.properties.summary.duration / 60)} min`,
-          googleMapsUrl,
-          name: "Alternative Route",
+          googleMapsUrl: encodeURI(
+            `https://www.google.com/maps/dir/?api=1&origin=${startCoords.lat},${startCoords.lon}&destination=${endCoords.lat},${endCoords.lon}&travelmode=driving`
+          ),
         };
       })
     );
 
-    const sortedByETA = [...routesWithAQI].sort((a, b) => a.eta - b.eta);
-    const sortedByAQI = [...routesWithAQI]
-      .filter((r) => r.aqi !== null)
-      .sort((a, b) => a.aqi - b.aqi);
+    // Sort for labels
+    const fastest = [...routesWithAQI].sort((a, b) => a.eta - b.eta)[0];
+    const cleanest = [...routesWithAQI].sort((a, b) => a.aqi - b.aqi)[0];
 
-    const routes = routesWithAQI.map((route) => {
-      let name = "Alternative Route";
-      if (route.eta === sortedByETA[0].eta) {
-        name = "Fastest Route";
-      } else if (
-        route.aqi &&
-        sortedByAQI.length > 0 &&
-        route.aqi === sortedByAQI[0].aqi
-      ) {
-        name = "Cleanest Air Route";
-      } else if (sortedByAQI.length > 0) {
-        const etaScore = route.eta / sortedByETA[0].eta;
-        const aqiScore = route.aqi ? route.aqi / sortedByAQI[0].aqi : 2;
-        route.balancedScore = etaScore * 0.6 + aqiScore * 0.4;
-      }
-      return { ...route, name };
+    routesWithAQI.forEach((r) => {
+      if (r === fastest) r.name = "Fastest Route";
+      else if (r === cleanest) r.name = "Cleanest Air Route";
     });
 
-    const routesWithScores = routes.filter((r) => r.balancedScore);
-    if (routesWithScores.length > 0) {
-      const bestBalanced = routesWithScores.sort(
-        (a, b) => a.balancedScore - b.balancedScore
-      )[0];
-      if (bestBalanced.name === "Alternative Route") {
-        bestBalanced.name = "Balanced Route";
-      }
-    }
-
-    routes.forEach((route) => delete route.balancedScore);
-
-    console.log("Sending routes:", routes.length);
-    res.json({ routes });
+    res.json({ routes: routesWithAQI });
   } catch (err) {
     console.error("Server error:", err.message);
-    res.status(500).json({
-      message: "Server error",
-      error: err.message,
-    });
+    res.status(500).json({ message: "Internal Server Error", error: err.message });
   }
 });
 
+// ------------------------------
 // Server
+// ------------------------------
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  console.log(`✅ Server is running on port ${PORT}`);
-  console.log(`🔑 ORS API Key: ${ORS_API_KEY ? "✓ Set" : "✗ Not set"}`);
-  console.log(
-    `🔑 OpenWeather API Key: ${OPENWEATHER_API_KEY ? "✓ Set" : "✗ Not set"}`
-  );
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🔑 ORS Key: ${ORS_API_KEY ? "✓ Set" : "✗ Missing"}`);
+  console.log(`🔑 OpenWeather Key: ${OPENWEATHER_API_KEY ? "✓ Set" : "✗ Missing"}`);
 });
